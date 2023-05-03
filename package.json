@@ -1,6 +1,6 @@
 {
   "name": "cmpl",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "no deps, no operations, no vowels - just a tiny compiler",
   "main": "dist/cjs.js",
   "module": "dist/index.mjs",
