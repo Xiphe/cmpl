@@ -321,10 +321,26 @@ export async function* wtch({
       })
     : watch;
 
-  for await (const event of wtchOrPll(entry, {
-    recursive: isDir ? recursive : false,
-    signal,
-  })) {
+  const queue = new AsyncQueue<WatchEvent>();
+
+  // @ts-ignore
+  signal?.addEventListener('abort', () => {
+    queue.done(true);
+  });
+
+  async function startWatching() {
+    for await (const event of wtchOrPll(entry, {
+      recursive: isDir ? recursive : false,
+      signal,
+    })) {
+      queue.push(event);
+    }
+    queue.done();
+  }
+
+  startWatching();
+
+  for await (const event of queue) {
     try {
       if (!manifest) {
         const m = await cmpl(cmplOpts);
@@ -467,4 +483,65 @@ function pllOptFromEnv() {
 
 function isRenamePrcssr(prcssr: Prcssr): prcssr is RenamePrcssr {
   return typeof (prcssr as any).transform !== 'function';
+}
+
+class AsyncQueue<Value> {
+  private queue: Array<Value> = [];
+  private resolveNext: (() => void) | null = null;
+  private isDone?: boolean | 'abort' = false;
+  private onAbort?: (err: 'done') => void;
+
+  public done(abort?: boolean): void {
+    this.isDone = abort ? 'abort' : true;
+    this.onAbort?.('done');
+  }
+
+  public push(value: Value): void {
+    if (this.isDone) {
+      throw new Error('Can not push to done queue');
+    }
+    this.queue.push(value);
+    if (this.resolveNext) {
+      this.resolveNext();
+    }
+  }
+
+  private async pop(): Promise<Value> {
+    if (this.queue.length === 0) {
+      if (this.isDone) {
+        throw 'done';
+      }
+      await new Promise<void>((resolve, reject) => {
+        this.onAbort = reject;
+        this.resolveNext = resolve;
+      });
+      this.onAbort = undefined;
+    }
+
+    const value = this.queue.shift()!;
+    return value;
+  }
+
+  public [Symbol.asyncIterator](): AsyncIterator<Value> {
+    return {
+      next: async (): Promise<IteratorResult<Value>> => {
+        try {
+          if (this.isDone === 'abort') {
+            throw 'done';
+          }
+
+          const value = await this.pop();
+          return {
+            value,
+            done: false,
+          };
+        } catch (err) {
+          if (err === 'done') {
+            return { done: true, value: undefined };
+          }
+          throw err;
+        }
+      },
+    };
+  }
 }
