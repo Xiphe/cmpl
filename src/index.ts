@@ -41,10 +41,15 @@ export type FileNamerFn = (
   originalName: string,
   contents: Buffer,
 ) => string | Promise<string>;
+
 export interface BasePrcssr {
   outDir: string;
   recursive?: boolean;
-  include?: (name: string, isDir: boolean) => boolean | Promise<boolean>;
+  include?: (
+    name: string,
+    isDir: boolean,
+    getContents?: () => Promise<Buffer | null>,
+  ) => boolean | Promise<boolean>;
 }
 export interface RenamePrcssr extends BasePrcssr {
   rename?: FileNamerFn;
@@ -76,6 +81,29 @@ export const cntntHsh =
       .substring(0, length)
       .toUpperCase()}${extname(name)}`;
   };
+
+export const cntntChngd = (
+  crypto: Crypto | Promise<Crypto> = import('node:crypto'),
+): ((
+  ...args: Parameters<NonNullable<BasePrcssr['include']>>
+) => Promise<boolean>) => {
+  const state = new Map<string, string>();
+  return async (name, isDir, getContents) => {
+    const { createHash } = await crypto;
+    const contents = (await getContents?.()) || null;
+    if (contents === null || isDir) {
+      return true;
+    }
+    const checksum = createHash('sha256').update(contents).digest('hex');
+
+    if (!state.has(name) || state.get(name) !== checksum) {
+      state.set(name, checksum);
+      return true;
+    }
+
+    return false;
+  };
+};
 
 export async function prcss(
   file: string,
@@ -156,7 +184,7 @@ export async function cmpl({
     length: processors.length,
   }).map(() => ({}));
   const { relative, join, dirname } = await path;
-  const { readdir, stat } = await fs;
+  const { readdir, stat, readFile } = await fs;
   let entryDir: string | null;
 
   const handle = async (
@@ -199,7 +227,9 @@ export async function cmpl({
           const incl =
             p &&
             (!p.include ||
-              (await p.include(relative(entryDir!, entryPath), false)))
+              (await p.include(relative(entryDir!, entryPath), false, () =>
+                readFile(entryPath),
+              )))
               ? p
               : null;
 
@@ -284,7 +314,7 @@ export async function* wtch({
     path,
   };
   const { join, dirname } = await path;
-  const { watch, stat } = await fs;
+  const { watch, stat, readFile } = await fs;
 
   let manifest: Record<string, string>[] | null = null;
   const exportManifest = () =>
@@ -368,7 +398,18 @@ export async function* wtch({
                 await Promise.all(processors)
               ).map(async (p) => {
                 const incl =
-                  p && (!p.include || (await p.include(event.filename, false)))
+                  p &&
+                  (!p.include ||
+                    (await p.include(event.filename, false, async () => {
+                      try {
+                        return await readFile(join(baseDir, event.filename));
+                      } catch (err) {
+                        if ((err as any)?.code === 'ENOENT') {
+                          return null;
+                        }
+                        throw err;
+                      }
+                    })))
                     ? p
                     : null;
 
