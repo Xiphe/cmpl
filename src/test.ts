@@ -99,16 +99,16 @@ test('cmpl', async (t) => {
         { method: 'readdir', path: 'deep', contents: ['test2.json'] },
         { method: 'stat', path: 'deep/test2.json', isDir: false },
         { method: 'readFile', path: 'test.json', contents: '{"hi":"ho"}' },
-        {
-          method: 'readFile',
-          path: 'deep/test2.json',
-          contents: '{"hü":"hott"}',
-        },
         { method: 'mkdir', path: 'dist' },
         {
           method: 'writeFile',
           path: 'dist/test.json',
           contents: '{"hi":"ho"}',
+        },
+        {
+          method: 'readFile',
+          path: 'deep/test2.json',
+          contents: '{"hü":"hott"}',
         },
         { method: 'mkdir', path: 'dist/deep' },
         {
@@ -203,7 +203,7 @@ test('cmpl', async (t) => {
         entry: __dirname,
         processors: [
           {
-            include: (name, isDir) => {
+            include: async (name, isDir) => {
               switch (i++) {
                 case 0:
                   assert.equal(name, 'test.json');

@@ -44,7 +44,7 @@ export type FileNamerFn = (
 export interface BasePrcssr {
   outDir: string;
   recursive?: boolean;
-  include?: (name: string, isDir: boolean) => boolean;
+  include?: (name: string, isDir: boolean) => boolean | Promise<boolean>;
 }
 export interface RenamePrcssr extends BasePrcssr {
   rename?: FileNamerFn;
@@ -172,17 +172,20 @@ export async function cmpl({
 
     if (isDir) {
       let relevantDir = false;
-      const dirProcessors = processors.map((p) => {
-        const incl =
-          p &&
-          (subEntry === entry ||
-            (p.recursive !== false &&
-              (!p.include || p.include(relative(entryDir!, entryPath), true))));
-        if (incl) {
-          relevantDir = true;
-        }
-        return incl ? p : null;
-      });
+      const dirProcessors = await Promise.all(
+        processors.map(async (p) => {
+          const incl =
+            p &&
+            (subEntry === entry ||
+              (p.recursive !== false &&
+                (!p.include ||
+                  (await p.include(relative(entryDir!, entryPath), true)))));
+          if (incl) {
+            relevantDir = true;
+          }
+          return incl ? p : null;
+        }),
+      );
 
       if (relevantDir) {
         await readDir(entryPath, dirProcessors);
@@ -191,17 +194,21 @@ export async function cmpl({
 
     if (!isDir) {
       let relevantFile = false;
-      const fileProcessors = processors.map((p) => {
-        const incl =
-          p && (!p.include || p.include(relative(entryDir!, entryPath), false))
-            ? p
-            : null;
+      const fileProcessors = await Promise.all(
+        processors.map(async (p) => {
+          const incl =
+            p &&
+            (!p.include ||
+              (await p.include(relative(entryDir!, entryPath), false)))
+              ? p
+              : null;
 
-        if (incl) {
-          relevantFile = true;
-        }
-        return incl;
-      });
+          if (incl) {
+            relevantFile = true;
+          }
+          return incl;
+        }),
+      );
 
       if (!relevantFile) {
         return;
@@ -340,10 +347,12 @@ export async function* wtch({
           }
           case 'change': {
             let relevantChange = false;
-            const changeProcessors = (await Promise.all(processors)).map(
-              (p) => {
+            const changeProcessors = await Promise.all(
+              (
+                await Promise.all(processors)
+              ).map(async (p) => {
                 const incl =
-                  p && (!p.include || p.include(event.filename, false))
+                  p && (!p.include || (await p.include(event.filename, false)))
                     ? p
                     : null;
 
@@ -351,7 +360,7 @@ export async function* wtch({
                   relevantChange = true;
                 }
                 return incl;
-              },
+              }),
             );
 
             if (relevantChange) {
